@@ -26,7 +26,7 @@ class AxisTwistCompensation:
         self.calibrate_start_x = config.getfloat('calibrate_start_x')
         self.calibrate_end_x = config.getfloat('calibrate_end_x')
         self.calibrate_y = config.getfloat('calibrate_y')
-        self.zx_compensations = config.getlists('zx_compensations',
+        self.z_compensations = config.getlists('z_compensations',
                                                default=[], parser=float)
         self.compensation_start_x = config.getfloat('compensation_start_x',
                                                     default=None)
@@ -54,9 +54,9 @@ class AxisTwistCompensation:
                                             self._update_z_compensation_value)
 
     def _update_z_compensation_value(self, pos):
-        if self.zx_compensations:
+        if self.z_compensations:
             pos[2] += self._get_interpolated_z_compensation(
-                pos[0], self.zx_compensations,
+                pos[0], self.z_compensations,
                 self.compensation_start_x,
                 self.compensation_end_x
                 )
@@ -87,7 +87,7 @@ class AxisTwistCompensation:
         return interpolated_z_compensation
 
     def clear_compensations(self):
-        self.zx_compensations = []
+        self.z_compensations = []
         self.zy_compensations = []
         self.m = None
         self.b = None
@@ -111,8 +111,8 @@ class Calibrater:
                             compensation.calibrate_y)
         self.x_end_point = (compensation.calibrate_end_x,
                           compensation.calibrate_y)
-        self.y_start_point = (compensation.calibrate_start_y,
-                            compensation.calibrate_x)
+        self.y_start_point = (compensation.calibrate_x,
+                            compensation.calibrate_start_y)
         self.y_end_point = (compensation.calibrate_end_y,
                             compensation.calibrate_x)
         self.results = None
@@ -157,7 +157,7 @@ class Calibrater:
         axis = gcmd.get('AXIS', 'X')
 
         # check for valid sample_count
-        if sample_count is None or sample_count < 2:
+        if sample_count < 2:
             raise self.gcmd.error(
                 "SAMPLE_COUNT to probe must be at least 2")
 
@@ -182,13 +182,12 @@ class Calibrater:
                     """
                     )
 
-            start_point = self.y_start_point
+            start_point = (self.y_start_point[1], self.y_start_point[0])
             end_point = self.y_end_point
         else:
             raise self.gcmd.error(
                 "AXIS_TWIST_COMPENSATION_CALIBRATE: "
                 "Invalid axis.")
-            return
 
         axis_range = end_point[0] - start_point[0]
 
@@ -284,6 +283,9 @@ class Calibrater:
             raise self.gcmd.error(
                 "SAMPLE_COUNT to probe must be at least 2")
 
+        # verify no other manual probe is in progress
+        manual_probe.verify_no_manual_probe(self.printer)
+
         # clear the current config
         self.compensation.clear_compensations()
 
@@ -292,12 +294,12 @@ class Calibrater:
 
         min_x = self.x_start_point[0]
         max_x = self.x_end_point[0]
-        min_y = self.y_start_point[0]
+        min_y = self.y_start_point[1]
         max_y = self.y_end_point[0]
 
         # calculate x positions
-        spcx = (max_x - min_x) / (sample_count - 1)
-        xps = [min_x + spcx * i for i in range(sample_count)]
+        interval_x = (max_x - min_x) / (sample_count - 1)
+        xps = [min_x + interval_x * i for i in range(sample_count)]
 
         # Calculate points array
         spcy = (max_y - min_y) / (sample_count - 1)
@@ -312,9 +314,6 @@ class Calibrater:
                     idx = sample_count -1 - j
                 points.append([xps[i], min_y + spcy * idx ])
             flip = not flip
-
-        # verify no other manual probe is in progress
-        manual_probe.verify_no_manual_probe(self.printer)
 
 
         # calculate the points to put the nozzle at, and probe
@@ -336,7 +335,7 @@ class Calibrater:
 
         # finalize
         configfile = self.printer.lookup_object('configfile')
-        configfile.set(self.configname, 'zx_compensations', x_corr_str)
+        configfile.set(self.configname, 'z_compensations', x_corr_str)
         configfile.set(self.configname, 'compensation_start_x',
                     self.x_start_point[0])
         configfile.set(self.configname, 'compensation_end_x',
@@ -345,7 +344,7 @@ class Calibrater:
 
         configfile.set(self.configname, 'zy_compensations', y_corr_str)
         configfile.set(self.configname, 'compensation_start_y',
-                    self.y_start_point[0])
+                    self.y_start_point[1])
         configfile.set(self.configname, 'compensation_end_y',
                     self.y_end_point[0])
 
@@ -365,7 +364,6 @@ class Calibrater:
 
         # probe the point
         pos = probe.run_single_probe(self.probe, self.gcmd)
-        #self.current_measured_z = pos[2]
 
         # horizontal_move_z (to prevent probe trigger or hitting bed)
         self._move_helper((None, None, self.horizontal_move_z))
@@ -461,13 +459,13 @@ class Calibrater:
 
         if(self.current_axis == 'X'):
 
-            configfile.set(self.configname, 'zx_compensations', values_as_str)
+            configfile.set(self.configname, 'z_compensations', values_as_str)
             configfile.set(self.configname, 'compensation_start_x',
                         self.x_start_point[0])
             configfile.set(self.configname, 'compensation_end_x',
                         self.x_end_point[0])
 
-            self.compensation.zx_compensations = self.results
+            self.compensation.z_compensations = self.results
             self.compensation.compensation_start_x = self.x_start_point[0]
             self.compensation.compensation_end_x = self.x_end_point[0]
 
@@ -475,12 +473,12 @@ class Calibrater:
 
             configfile.set(self.configname, 'zy_compensations', values_as_str)
             configfile.set(self.configname, 'compensation_start_y',
-                        self.y_start_point[0])
+                        self.y_start_point[1])
             configfile.set(self.configname, 'compensation_end_y',
                         self.y_end_point[0])
 
             self.compensation.zy_compensations = self.results
-            self.compensation.compensation_start_y = self.y_start_point[0]
+            self.compensation.compensation_start_y = self.y_start_point[1]
             self.compensation.compensation_end_y = self.y_end_point[0]
 
         self.gcode.respond_info(
