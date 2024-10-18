@@ -23,9 +23,10 @@ class AxisTwistCompensation:
         self.horizontal_move_z = config.getfloat('horizontal_move_z',
                                                  DEFAULT_HORIZONTAL_MOVE_Z)
         self.speed = config.getfloat('speed', DEFAULT_SPEED)
-        self.calibrate_start_x = config.getfloat('calibrate_start_x')
-        self.calibrate_end_x = config.getfloat('calibrate_end_x')
-        self.calibrate_y = config.getfloat('calibrate_y')
+        self.calibrate_start_x = config.getfloat('calibrate_start_x',
+                                                default=None)
+        self.calibrate_end_x = config.getfloat('calibrate_end_x', default=None)
+        self.calibrate_y = config.getfloat('calibrate_y', default=None)
         self.z_compensations = config.getlists('z_compensations',
                                                default=[], parser=float)
         self.compensation_start_x = config.getfloat('compensation_start_x',
@@ -113,8 +114,8 @@ class Calibrater:
                           compensation.calibrate_y)
         self.y_start_point = (compensation.calibrate_x,
                             compensation.calibrate_start_y)
-        self.y_end_point = (compensation.calibrate_end_y,
-                            compensation.calibrate_x)
+        self.y_end_point = (compensation.calibrate_x,
+                            compensation.calibrate_end_y)
         self.results = None
         self.current_point_index = None
         self.gcmd = None
@@ -164,10 +165,34 @@ class Calibrater:
         # clear the current config
         self.compensation.clear_compensations()
 
-        # calculate some values
+        # calculate the points to put the probe at, returned as a list of tuples
+        nozzle_points = []
+
         if axis == 'X':
+
+            if not all([
+                self.x_start_point[0],
+                self.x_end_point[0],
+                self.x_start_point[1]
+                ]):
+                raise self.gcmd.error(
+                    """AXIS_TWIST_COMPENSATION for X axis requires
+                    calibrate_start_x, calibrate_end_x and calibrate_y
+                    to be defined
+                    """
+                    )
+
             start_point = self.x_start_point
             end_point = self.x_end_point
+
+            x_axis_range = end_point[0] - start_point[0]
+            interval_dist = x_axis_range / (sample_count - 1)
+
+            for i in range(sample_count):
+                x = start_point[0] + i * interval_dist
+                y = start_point[1]
+                nozzle_points.append((x, y))
+
         elif axis == 'Y':
 
             if not all([
@@ -182,32 +207,21 @@ class Calibrater:
                     """
                     )
 
-            start_point = (self.y_start_point[1], self.y_start_point[0])
+            start_point = self.y_start_point
             end_point = self.y_end_point
+
+            y_axis_range = end_point[1] - start_point[1]
+            interval_dist = y_axis_range / (sample_count - 1)
+
+            for i in range(sample_count):
+                x = start_point[0]
+                y = start_point[1] + i * interval_dist
+                nozzle_points.append((x, y))
+
         else:
             raise self.gcmd.error(
                 "AXIS_TWIST_COMPENSATION_CALIBRATE: "
                 "Invalid axis.")
-
-        axis_range = end_point[0] - start_point[0]
-
-        interval_dist = axis_range / (sample_count - 1)
-
-        # calculate the points to put the probe at, returned as a list of tuples
-        nozzle_points = []
-
-        if axis == 'X':
-            for i in range(sample_count):
-                x = start_point[0] + i * interval_dist
-                y = start_point[1]
-                nozzle_points.append((x, y))
-
-        elif axis == 'Y':
-            for i in range(sample_count):
-                x = start_point[1]
-                y = start_point[0] + i * interval_dist
-                nozzle_points.append((x, y))
-
 
         probe_points = self._calculate_probe_points(
             nozzle_points, self.probe_x_offset, self.probe_y_offset)
@@ -289,20 +303,17 @@ class Calibrater:
         # clear the current config
         self.compensation.clear_compensations()
 
-        # calculate the points to put the probe at, returned as a list of tuples
-        nozzle_points = []
-
         min_x = self.x_start_point[0]
         max_x = self.x_end_point[0]
         min_y = self.y_start_point[1]
-        max_y = self.y_end_point[0]
+        max_y = self.y_end_point[1]
 
         # calculate x positions
         interval_x = (max_x - min_x) / (sample_count - 1)
         xps = [min_x + interval_x * i for i in range(sample_count)]
 
         # Calculate points array
-        spcy = (max_y - min_y) / (sample_count - 1)
+        interval_y = (max_y - min_y) / (sample_count - 1)
         flip = False
 
         points = []
@@ -312,7 +323,7 @@ class Calibrater:
                     idx = j
                 else:
                     idx = sample_count -1 - j
-                points.append([xps[i], min_y + spcy * idx ])
+                points.append([xps[i], min_y + interval_y * idx ])
             flip = not flip
 
 
@@ -346,8 +357,7 @@ class Calibrater:
         configfile.set(self.configname, 'compensation_start_y',
                     self.y_start_point[1])
         configfile.set(self.configname, 'compensation_end_y',
-                    self.y_end_point[0])
-
+                    self.y_end_point[1])
 
         self.gcmd.respond_info(
             "AXIS_TWIST_COMPENSATION_AUTOCALIBRATE: Calibration complete: ")
@@ -475,11 +485,11 @@ class Calibrater:
             configfile.set(self.configname, 'compensation_start_y',
                         self.y_start_point[1])
             configfile.set(self.configname, 'compensation_end_y',
-                        self.y_end_point[0])
+                        self.y_end_point[1])
 
             self.compensation.zy_compensations = self.results
             self.compensation.compensation_start_y = self.y_start_point[1]
-            self.compensation.compensation_end_y = self.y_end_point[0]
+            self.compensation.compensation_end_y = self.y_end_point[1]
 
         self.gcode.respond_info(
             "AXIS_TWIST_COMPENSATION state has been saved "
